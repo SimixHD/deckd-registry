@@ -1,8 +1,7 @@
 # deckd-registry
 
-The plugin marketplace for [deckd](https://github.com/SimixHD/deckd). It is
-one Git repository holding one index file, `index.json`. No server, no
-database, no account.
+The plugin marketplace for deckd. One Git repository holding one
+index file, `index.json`. No server, no database, no account.
 
 The registry half described here is live today: the index, its schema, the
 checks that guard it, and the published site. The client half — a deckd
@@ -66,7 +65,7 @@ newest version first:
 | `i18n` | plugin | Keyed by the **English source sentence**, the same way `plugin.toml` and `po/de.po` are |
 | `version` | version | Semantic versioning |
 | `min_api` | **version** | It changes between versions — that is exactly why it lives here and not on the plugin |
-| `license` | version | SPDX identifier; a licence change is a version event |
+| `license` | **version** | SPDX identifier; a licence change is a version event |
 | `capabilities` | **version** | Same reasoning, and comparing two versions' capabilities is the basis of the update rule |
 | `module`, `manifest` | version | Each an URL, `sha256` and `bytes` — two files, no archive |
 | `yanked` | version | `null`, or `{ "reason": …, "since": … }` |

@@ -2,7 +2,8 @@
 
 From `cargo new` to a key that does something. The example below is
 complete — it was built, installed, and loaded on a Stream Deck Original
-exactly as shown.
+exactly as shown. The one step that won't reproduce yet, as published here,
+is the SDK dependency in Step 2 — see the note there.
 
 What the individual functions guarantee is described in
 [`plugin-api.md`](plugin-api.md); this document is the path there.
@@ -68,6 +69,11 @@ codegen-units = 1
 strip         = true
 ```
 
+**This dependency doesn't resolve yet.** The `deckd-plugins` repository
+exists and is public, but it's currently empty — the `sdk-v0.1.0` tag lands
+with the SDK's first release. Until then, `cargo build` fails on this line;
+that's expected, not a mistake in your `Cargo.toml`.
+
 There is one thing you'd otherwise get stuck on: **`crate-type =
 ["cdylib"]`.** Without it you get an `.rlib`, and never a `.wasm`.
 
@@ -129,10 +135,11 @@ rules and the lookup order are in [`plugin-api.md`](plugin-api.md) §5 under
 
 ## Step 4: `src/lib.rs`
 
-A plugin is an implementation of the `Guest` trait, generated from the WIT
-interface definition (see [`plugin-api.md`](plugin-api.md) §2 for the full
-definition). **All nine functions have to be there**, even the empty ones —
-the ABI is complete, or it isn't there at all.
+A plugin is an implementation of the `Guest` trait, generated from
+`plugin.wit`, the WIT interface definition (see
+[`plugin-api.md`](plugin-api.md) §2 for the full definition). **All nine
+functions have to be there**, even the empty ones — the ABI is complete, or
+it isn't there at all.
 
 ```rust
 //! A counter on a key: every press increments it, a long press resets it to
@@ -178,7 +185,7 @@ impl deck_plugin_sdk::exports::streamdeck::plugin::guest::Guest for Counter {
 
     fn on_key_up(_key: KeyRef) {}
 
-    /// Back to zero. A long press arrives **in addition to**, between
+    /// Back to zero. A long press arrives **additionally**, between
     /// `on-key-down` and `on-key-up`.
     fn on_long_press(key: KeyRef) {
         store(&key, &Settings { count: 0 });
@@ -415,6 +422,9 @@ deck-plugin-sdk = { git = "https://github.com/SimixHD/deckd-plugins", tag = "sdk
 serde           = { version = "1", features = ["derive"] }
 ```
 
+(Same caveat as Step 2: this line doesn't resolve until the SDK is
+published.)
+
 ```rust
 // src/lib.rs
 pub mod rules;          // plain Rust, tested on the host
@@ -438,7 +448,7 @@ plugin, and the parsing of `/proc/stat` for the `sysmon` plugin.
 | State **defekt** | The `.wasm` fails to compile. Either `crate-type = ["cdylib"]` is missing, or it was built for the wrong target. After three attempts it goes dormant and comes back on its own once the file changes |
 | State **deaktiviert** | `init` returned `Err` (once is enough), or three violations in 60 s. The reason is in the log |
 | State **hängt** | Jobs or commands are getting lost; usually a guest call that's taking too long |
-| Key shows "Plugin fehlt" | The plugin isn't loaded, is disabled, broken — or has been stuck for more than 2 s |
+| Key shows "Plugin fehlt" | The plugin is **nicht geladen**, **deaktiviert**, or **defekt** — or **hängt** for more than 2 s |
 | Key stays blank | Not an error: nothing was drawn. `on-appear` is the place for that |
 | A call returns "is not allowed by this plugin's manifest" | The capability is missing. The sentence names exactly what was requested |
 

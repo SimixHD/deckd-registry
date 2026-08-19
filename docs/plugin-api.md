@@ -6,9 +6,11 @@ wants to *write* a plugin should start with
 `cargo new` to a running key is. This document covers what applies after
 that.
 
-**The authoritative source is the WIT interface definition in §2**, not this
-document: both the host and the SDK are generated from it, while this
-document is maintained by hand. Wherever the two disagree, the `.wit` wins.
+**The authoritative source is `plugin.wit`, the plugin interface
+definition**, not this document: both the host and the SDK are generated
+from it, while this document is maintained by hand. Wherever the two
+disagree, `plugin.wit` wins. §2 below reproduces the current `plugin.wit`
+in full — a copy, not the source itself.
 
 **And the second rule, right on its heels: the SDK enforces nothing.** Every
 capability check sits in the host, in exactly the function that would do the
@@ -64,7 +66,7 @@ after a restart** (section 9).
 
 ## 2. The interface
 
-The definition of `wit/plugin.wit`, in full:
+The current definition of `plugin.wit`, in full:
 
 ```wit
 package streamdeck:plugin@1.0.0;
@@ -356,7 +358,7 @@ to telling it that it has it.
 | `on-disappear` | the key is no longer visible. Shutting down timers belongs here |
 | `on-key-down` | a real key edge, at the moment of pressing |
 | `on-key-up` | a real key edge, at the moment of release |
-| `on-long-press` | held for 500 ms — **in addition to**, between `down` and `up` |
+| `on-long-press` | held for 500 ms — **additionally**, between `down` and `up` |
 | `on-timer` | a timer armed with `set-timer` is due |
 | `on-settings-changed` | the daemon has written new settings for this key |
 | `list-options` | a dynamic source from the manifest is being queried |
@@ -603,7 +605,7 @@ enforces:
 | Commands per pass | **64** per plugin, **128** across all of them | the device loop works through a backlog in bounded portions instead of draining it all at once — round-robin, so one loud plugin can't spend the budget before its quiet neighbor gets a turn. Nothing is lost in the process, it just takes a few more passes |
 | Shutdown threshold | **3 violations in 60 s** | a trap, a deadline overrun, and a full queue all count the same |
 | Failed build attempts | **3**, spaced 5 s apart | its **own** counter, not the violation budget — see section 8 |
-| Deadline on shutdown | **2 s** for all threads together | after that, it gives up, with logging |
+| Daemon exit deadline | **2 s** for all threads together | after that, it gives up, with logging |
 
 **Compute time is compute time, not wall-clock time.** Time the host spends
 on the plugin's behalf — `run-process`, `http-request`, `read-file` — is
@@ -703,7 +705,7 @@ ABI needs to know it.
   guard region per instance; none of it is actually resident. Anyone reading
   `ps` or a system monitor sees this as `VIRT` and is right to be alarmed.
   The measured *resident* value is documented in the daemon's architecture
-  reference, part of the main deckd project: 43.6 MB with three plugins
+  reference (§6), part of the main deckd project: 43.6 MB with three plugins
   loaded.
 - **A newly installed plugin is only noticed after a restart.** The host
   reads the user directory **once, at build time**; there is no runtime
@@ -741,6 +743,6 @@ ABI needs to know it.
 | Resource | Content |
 |---|---|
 | [`plugin-authoring.md`](plugin-authoring.md) | From `cargo new` to a running key, with a complete example |
-| The daemon's architecture reference, part of the main deckd project | Why one thread per plugin, and how commands flow |
+| The daemon's architecture reference (§4), part of the main deckd project | Why one thread per plugin, and how commands flow |
 | The daemon's profile format reference, part of the main deckd project | How a key points at a plugin |
-| The internal design spec, part of the main deckd project | The design spec with all the reasoning behind it |
+| The internal design spec, part of the main deckd project | All the reasoning behind the decisions in this document |

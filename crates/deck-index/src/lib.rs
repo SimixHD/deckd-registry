@@ -11,5 +11,6 @@
 //! so that every rule in this crate is testable from memory alone.
 
 mod index;
+mod pick;
 
 pub use index::{Artifact, Capabilities, Index, Plugin, SCHEMA, Version, Yanked};

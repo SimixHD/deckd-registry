@@ -1,0 +1,16 @@
+[package]
+name                   = "deck-index"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description            = "The deckd marketplace index: types, parser and every rule that needs no network."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace      = true
+serde_json.workspace = true
+semver.workspace     = true

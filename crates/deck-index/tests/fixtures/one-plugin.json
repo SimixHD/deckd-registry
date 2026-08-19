@@ -1,0 +1,23 @@
+{
+  "schema": 2,
+  "updated": "2026-08-19",
+  "plugins": [{
+    "id": "dev.simix.audio",
+    "name": "Audio (PipeWire)",
+    "description": "Volume, mute and routing via PipeWire.",
+    "author": "Simon Plomer",
+    "homepage": "https://github.com/SimixHD/deckd-plugins",
+    "categories": ["audio"],
+    "i18n": { "de": { "Audio (PipeWire)": "Audio (PipeWire)" } },
+    "versions": [{
+      "version": "1.0.0",
+      "min_api": 1,
+      "license": "MIT OR Apache-2.0",
+      "capabilities": { "process": ["wpctl"], "timer": true },
+      "module":   { "url": "https://example.org/plugin.wasm", "sha256": "aa", "bytes": 10 },
+      "manifest": { "url": "https://example.org/plugin.toml", "sha256": "bb", "bytes": 20 },
+      "yanked": null,
+      "signature": null
+    }]
+  }]
+}

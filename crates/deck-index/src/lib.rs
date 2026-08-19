@@ -10,9 +10,11 @@
 //! measuring a checksum against the file it names — lives in `index-tools`,
 //! so that every rule in this crate is testable from memory alone.
 
+mod growth;
 mod index;
 mod pick;
 mod validate;
 
+pub use growth::Growth;
 pub use index::{Artifact, Capabilities, Index, Plugin, SCHEMA, Version, Yanked};
 pub use validate::{Problem, RESERVED_NAMESPACE};

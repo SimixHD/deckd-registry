@@ -43,6 +43,15 @@ pub enum Problem {
         /// The plugin ID with no versions.
         id: String,
     },
+    /// A plugin's homepage URL is not HTTPS.
+    ///
+    /// Separate from [`Problem::NotHttps`] rather than reusing it: a
+    /// homepage has no version and no artifact kind, so it does not fit
+    /// that variant's `{ id, version, artifact }` shape.
+    HomepageNotHttps {
+        /// The plugin ID whose homepage URL is not HTTPS.
+        id: String,
+    },
     /// A version string is not semantic.
     NotSemver {
         /// The plugin ID containing the non-semantic version.
@@ -102,6 +111,7 @@ impl fmt::Display for Problem {
                 "{id}: {RESERVED_NAMESPACE}* is reserved for the registry's own plugins"
             ),
             Self::NoVersions { id } => write!(f, "{id}: no versions listed"),
+            Self::HomepageNotHttps { id } => write!(f, "{id}: the homepage url is not https"),
             Self::NotSemver { id, version } => write!(f, "{id} {version}: not a semantic version"),
             Self::DuplicateVersion { id, version } => write!(f, "{id} {version}: listed twice"),
             Self::VersionsOutOfOrder { id, earlier, later } => write!(
@@ -178,6 +188,13 @@ impl Index {
             }
             if plugin.versions.is_empty() {
                 problems.push(Problem::NoVersions { id: id.clone() });
+            }
+            // Its own `if`, not chained onto another with `else if`: a
+            // reserved-namespace id with an unsafe homepage must report
+            // both, the same reason `ReservedNamespace` above does not
+            // hide behind `NotReverseDomain`.
+            if !plugin.homepage.starts_with("https://") {
+                problems.push(Problem::HomepageNotHttps { id: id.clone() });
             }
 
             let mut seen_versions = BTreeSet::new();
@@ -403,6 +420,35 @@ mod tests {
                 .iter()
                 .any(|p| matches!(p, Problem::NotHttps { .. }))
         );
+    }
+
+    /// The case a contributor actually hits: a homepage typed as `http://`
+    /// rather than copied with the scheme it already had.
+    #[test]
+    fn a_plain_http_homepage_is_refused() {
+        let json = plugin("org.example.thing", &version("1.0.0")).replace(
+            r#""homepage":"https://example.org""#,
+            r#""homepage":"http://example.org""#,
+        );
+        assert!(matches!(
+            index(&json).check().as_slice(),
+            [Problem::HomepageNotHttps { id }] if id == "org.example.thing"
+        ));
+    }
+
+    /// The case that matters: a homepage is an `href` on the rendered
+    /// page, and a `javascript:` URL there is a click-triggered exploit,
+    /// not a broken link. `https://` is required, not merely preferred.
+    #[test]
+    fn a_homepage_with_a_javascript_url_is_refused() {
+        let json = plugin("org.example.thing", &version("1.0.0")).replace(
+            r#""homepage":"https://example.org""#,
+            r#""homepage":"javascript:alert(1)""#,
+        );
+        assert!(matches!(
+            index(&json).check().as_slice(),
+            [Problem::HomepageNotHttps { id }] if id == "org.example.thing"
+        ));
     }
 
     /// Two rules, two findings. A reserved id that is *also* malformed used

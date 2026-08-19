@@ -300,24 +300,28 @@ are documented in the daemon's profile format reference.
 **A newly installed plugin is only noticed after a restart** — there is no
 runtime rescan (see [`plugin-api.md`](plugin-api.md) §9).
 
+`deckctl`'s own output is not yet localized to English — what it prints
+today is German, regardless of the reader's own language, so that is what
+is shown here too:
+
 ```console
 $ deckctl plugins
 Plugins:
   Counter [org.example.counter]
-    State: loaded
+    Zustand: geladen
     Version: 1.0.0
-    Actions: Counter
+    Aktionen: Counter
     Capabilities:
-      May run: none
-      May reach over HTTPS: none
-      May additionally read: none
-      May use timers: no
+      Darf ausführen: keine
+      Darf per HTTPS erreichen: keine
+      Darf zusätzlich lesen: keine
+      Darf Timer nutzen: nein
 ```
 
-**"loaded"** means: manifest accepted, component compiled, `init` has run,
-a key is visible. If it says **"not loaded"**, no key of this plugin is on
-the active page yet — or no device is attached. The rest of the states are
-in [`plugin-api.md`](plugin-api.md) §8.
+**"geladen"** means: manifest accepted, component compiled, `init` has run,
+a key is visible. If it says **"nicht geladen"**, no key of this plugin is
+on the active page yet — or no device is attached. The rest of the states
+are in [`plugin-api.md`](plugin-api.md) §8.
 
 Now key 0 shows a `0`; every press increments it, a long hold resets it —
 and the value lives in the profile, so it survives a restart.
@@ -431,15 +435,18 @@ plugin, and the parsing of `/proc/stat` for the `sysmon` plugin.
 | Symptom | Likely cause |
 |---|---|
 | `deckctl plugins` doesn't list the plugin at all | Directory name ≠ `id`, the manifest isn't named `plugin.toml`, or the manifest is malformed — the daemon names every rejected plugin, with a reason, at startup |
-| State **broken** | The `.wasm` fails to compile. Either `crate-type = ["cdylib"]` is missing, or it was built for the wrong target. After three attempts it goes dormant and comes back on its own once the file changes |
-| State **disabled** | `init` returned `Err` (once is enough), or three violations in 60 s. The reason is in the log |
-| State **stuck** | Jobs or commands are getting lost; usually a guest call that's taking too long |
-| Key shows "Plugin missing" | The plugin isn't loaded, is disabled, broken — or has been stuck for more than 2 s |
+| State **defekt** | The `.wasm` fails to compile. Either `crate-type = ["cdylib"]` is missing, or it was built for the wrong target. After three attempts it goes dormant and comes back on its own once the file changes |
+| State **deaktiviert** | `init` returned `Err` (once is enough), or three violations in 60 s. The reason is in the log |
+| State **hängt** | Jobs or commands are getting lost; usually a guest call that's taking too long |
+| Key shows "Plugin fehlt" | The plugin isn't loaded, is disabled, broken — or has been stuck for more than 2 s |
 | Key stays blank | Not an error: nothing was drawn. `on-appear` is the place for that |
 | A call returns "is not allowed by this plugin's manifest" | The capability is missing. The sentence names exactly what was requested |
 
-Everything a plugin sends through `log` ends up in the daemon's journal; to
-follow it live, use `deckctl watch`.
+As with `deckctl`'s own output above, none of this is localized to English
+yet — the state names and the "Plugin fehlt" tile title are German in
+today's build, whichever language the reader speaks. Everything a plugin
+sends through `log` ends up in the daemon's journal; to follow it live, use
+`deckctl watch`.
 
 ---
 

@@ -407,7 +407,7 @@ sub-project 3 will call it. `audio` already answers it.
 named error, not a silently ignored field.
 
 ```toml
-id      = "dev.streamdeck.audio"      # reverse domain name, = directory name
+id      = "org.example.audio"         # reverse domain name, = directory name
 name    = "Audio (PipeWire)"
 version = "1.0.0"
 api     = 1                            # currently supported: 1
@@ -536,7 +536,7 @@ A profile points at all of this with three fields on a key:
 
 ```json
 "11": {
-  "plugin": "dev.streamdeck.audio",
+  "plugin": "org.example.audio",
   "action": "fader",
   "settings": { "targets": ["music"], "step_pct": -5 }
 }
@@ -614,23 +614,27 @@ The flip side of that is in section 9.
 
 ## 8. States, errors, and the error tile
 
+The `deckctl` column is what the tool actually prints today — its output is
+not yet localized to English, regardless of the reader's own language:
+
 | State | `deckctl` | What triggers it | How it ends |
 |---|---|---|---|
-| `Loaded` | loaded | running and keeping up | — |
-| `NotLoaded` | not loaded | no key visible yet — or not installed at all; the same from the device loop's point of view | the first visible key |
-| `Disabled` | disabled | 3 violations in 60 s, or `init` refused | a daemon restart, or an explicit re-activation: `deckctl restart-plugin <id>` |
-| `Broken` | broken | the component fails to compile three times | **on its own**, as soon as the file changes — the thread reads and hashes it every 5 s |
-| `Stuck` | stuck | jobs or its own commands are getting lost | as soon as the plugin catches up again |
+| `Loaded` | geladen | running and keeping up | — |
+| `NotLoaded` | nicht geladen | no key visible yet — or not installed at all; the same from the device loop's point of view | the first visible key |
+| `Disabled` | deaktiviert | 3 violations in 60 s, or `init` refused | a daemon restart, or an explicit re-activation: `deckctl restart-plugin <id>` |
+| `Broken` | defekt | the component fails to compile three times | **on its own**, as soon as the file changes — the thread reads and hashes it every 5 s |
+| `Stuck` | hängt | jobs or its own commands are getting lost | as soon as the plugin catches up again |
 
 **The error tile** is dark gray (`[40, 40, 40]`) with the title **"Plugin
-missing"**, and thereby distinguishable from the dark-red tile of an icon
-that fails to render. It appears immediately for `NotLoaded`, `Disabled`,
-and `Broken` — and for `Stuck` **only after 2 s**: a single full pass should
-stay invisible, a plugin that keeps losing shouldn't. A tile that flickers
-at every bit of congestion teaches a user to ignore it.
+fehlt"** (also not yet localized), and thereby distinguishable from the
+dark-red tile of an icon that fails to render. It appears immediately for
+`NotLoaded`, `Disabled`, and `Broken` — and for `Stuck` **only after 2 s**: a
+single full pass should stay invisible, a plugin that keeps losing
+shouldn't. A tile that flickers at every bit of congestion teaches a user to
+ignore it.
 
 The tile doesn't say *which* plugin is missing — on 72×72 pixels, "Plugin
-missing" fits and little else. The id is in the log and in `deckctl
+fehlt" fits and little else. The id is in the log and in `deckctl
 plugins`.
 
 **The assignment stays in the profile.** A plugin that's missing doesn't

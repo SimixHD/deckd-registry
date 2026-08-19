@@ -134,7 +134,7 @@ fn run_check(path: &str, reserved_allowed: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let faults = check_artifacts(&index, &Http);
+    let faults = check_artifacts(&index, &Http::new());
     if !faults.is_empty() {
         for fault in &faults {
             eprintln!("{fault}");
@@ -269,8 +269,9 @@ mod tests {
     /// since it renders this repository's own index and never a stranger's
     /// pull request, so `--allow-reserved` here could only mislead about
     /// what the command does. Without this arm the flag would be collected
-    /// and then silently unused — the same failure mode Task 6's review
-    /// raised for an unrecognised flag, one level up.
+    /// and then silently unused — the same failure mode an unrecognised
+    /// flag has one level up, and the reason that one is rejected rather
+    /// than ignored.
     #[test]
     fn render_does_not_accept_the_allow_reserved_flag() {
         assert_eq!(

@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members  = ["crates/deck-index", "crates/index-tools"]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.97"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/SimixHD/deckd-registry"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code  = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver     = "1"
+sha2       = "0.10"
+ureq       = { version = "3.3", default-features = false, features = ["rustls", "gzip"] }

@@ -110,6 +110,19 @@ mod tests {
         assert_eq!(plugin.pick(1).unwrap().version, "1.0.0");
     }
 
+    /// `pick` reads the list and does not reorder it. Every other case here
+    /// is newest-first, so a `pick` that sorted would pass them all; this
+    /// one lists 1.0.0 above 2.0.0 and asks for the first fit, which is the
+    /// older one. `check` refuses an index in this order — and that is
+    /// exactly the point: the ordering rule is what makes "first that fits"
+    /// mean "newest that fits", so `pick` must not paper over a list that
+    /// broke it.
+    #[test]
+    fn pick_returns_the_first_version_that_fits_rather_than_the_newest() {
+        let plugin = plugin(vec![version("1.0.0", 1, false), version("2.0.0", 1, false)]);
+        assert_eq!(plugin.pick(1).unwrap().version, "1.0.0");
+    }
+
     /// An index that offers nothing is a normal index, not a broken one.
     #[test]
     fn an_empty_index_is_readable() {

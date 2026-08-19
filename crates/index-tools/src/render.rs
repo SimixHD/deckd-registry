@@ -25,18 +25,24 @@ fn escape(text: &str) -> String {
 ///
 /// Every branch rounds up, on purpose: a shown size must never be smaller
 /// than the file. `{:.1}` on a float rounds to nearest, which understates
-/// about half the time — 1 100 000 bytes would print `1.0 MB`, naming a
+/// about half the time — 1 100 000 bytes would print `1.0 MiB`, naming a
 /// size (1 048 576 bytes) smaller than the download actually is. Doing the
-/// rounding in integers, the same way the kB branch already does with
-/// `div_ceil`, keeps the guarantee true in the MB branch too.
+/// rounding in integers, the same way the KiB branch already does with
+/// `div_ceil`, keeps the guarantee true in the MiB branch too.
+///
+/// `KiB` and `MiB`, not `kB` and `MB`: the divisor is 1024, and the label
+/// has to name the unit the arithmetic actually uses. Under the SI reading
+/// the shorter labels claim, 148 992 bytes is 149 kB — so a page printing
+/// `146 kB` would break the very guarantee this function exists to keep, by
+/// its own label.
 fn human_bytes(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes} B")
     } else if bytes < 1024 * 1024 {
-        format!("{} kB", bytes.div_ceil(1024))
+        format!("{} KiB", bytes.div_ceil(1024))
     } else {
-        let tenths_of_mb = (u128::from(bytes) * 10).div_ceil(1024 * 1024);
-        format!("{}.{} MB", tenths_of_mb / 10, tenths_of_mb % 10)
+        let tenths_of_mib = (u128::from(bytes) * 10).div_ceil(1024 * 1024);
+        format!("{}.{} MiB", tenths_of_mib / 10, tenths_of_mib % 10)
     }
 }
 
@@ -165,9 +171,11 @@ fn listing(index: &Index) -> String {
 /// The file name of a plugin page is its id. That is safe **because
 /// `run_render` runs the offline rules first**: they refuse anything that is
 /// not a reverse domain, so an id holds nothing but lowercase letters,
-/// digits, hyphens and dots — no slash, no `..`, nothing that could name a
-/// file outside `_site`. That guard lives in the renderer's own caller and
-/// not only in the workflow, so it holds however this code is reached.
+/// digits, hyphens, underscores and the dots between its parts — and no part
+/// may be empty, which is what rules out a leading dot and a `..` alike. No
+/// slash, nothing that could name a file outside `_site`. That guard lives in
+/// the renderer's own caller and not only in the workflow, so it holds
+/// however this code is reached.
 pub fn render(index: &Index) -> Vec<(String, String)> {
     let mut pages = vec![("index.html".to_owned(), listing(index))];
     for plugin in &index.plugins {
@@ -255,26 +263,28 @@ mod tests {
         assert!(detail.contains("MIT"));
         // 148 992 / 1024 = 145.5, rounded up to 146. The number here is
         // computed, not estimated: `human_bytes` rounds up so a displayed
-        // size is never smaller than the file.
+        // size is never smaller than the file. The unit is the one the
+        // divisor names — 146 KiB, not 146 kB, which would be a smaller
+        // number of bytes than the file holds.
         assert!(
-            detail.contains("146 kB"),
+            detail.contains("146 KiB"),
             "sizes are shown in units people read"
         );
         assert!(detail.contains("wpctl"), "the commands it may run");
         assert!(detail.contains("timers"), "the timer permission in words");
     }
 
-    /// The MB branch must round up exactly like the kB branch does: a
+    /// The MiB branch must round up exactly like the KiB branch does: a
     /// shown size is never allowed to be smaller than the file. 1 100 000
-    /// bytes is 1.049… MiB — round-to-nearest would print `1.0 MB`, which
+    /// bytes is 1.049… MiB — round-to-nearest would print `1.0 MiB`, which
     /// names a size (1 048 576 bytes) smaller than the file itself.
     #[test]
-    fn a_size_that_rounds_down_to_the_nearest_tenth_of_a_megabyte_rounds_up_instead() {
+    fn a_size_that_rounds_down_to_the_nearest_tenth_of_a_mebibyte_rounds_up_instead() {
         let json = ONE.replace("148992", "1100000");
         let pages = render(&Index::from_json(&json).unwrap());
         let detail = page(&pages, "org.example.thing.html");
         assert!(
-            detail.contains("1.1 MB"),
+            detail.contains("1.1 MiB"),
             "a shown size must never be smaller than the file: {detail}"
         );
     }
@@ -322,6 +332,35 @@ mod tests {
         let listing = page(&pages, "index.html");
         assert!(!listing.contains("<script>"));
         assert!(listing.contains("&lt;script&gt;"));
+    }
+
+    /// The other half of `escape`, and the half nothing witnessed: the
+    /// characters that only matter *inside an attribute*. `homepage` is the
+    /// one attacker-controlled string that lands in one, and `check`
+    /// requires no more of it than the `https://` prefix — so this URL
+    /// passes every offline rule there is and reaches `href` as written.
+    /// The `"` is what would close the attribute early and let the rest of
+    /// the string out into markup; `&` and `'` are escaped in the same
+    /// pass and would go unnoticed the same way. The query in front of the
+    /// payload is there to carry those two.
+    #[test]
+    fn a_homepage_is_escaped_inside_the_attribute_it_lands_in() {
+        let json = ONE.replace(
+            r#""homepage":"https://example.org""#,
+            r#""homepage":"https://example.org/?q='&\"><script>alert(1)</script>""#,
+        );
+        let pages = render(&Index::from_json(&json).unwrap());
+        let detail = page(&pages, "org.example.thing.html");
+        assert!(
+            detail.contains(
+                r#"href="https://example.org/?q=&#39;&amp;&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;""#
+            ),
+            "the homepage stays inside its attribute: {detail}"
+        );
+        assert!(
+            !detail.contains("<script>"),
+            "nothing escaped the attribute: {detail}"
+        );
     }
 
     /// Every one of the five `Capabilities` fields shows up in words, and

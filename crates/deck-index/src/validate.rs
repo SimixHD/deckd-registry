@@ -172,7 +172,8 @@ impl Index {
             }
             if !looks_like_a_reverse_domain(&id) {
                 problems.push(Problem::NotReverseDomain { id: id.clone() });
-            } else if id.starts_with(RESERVED_NAMESPACE) && !reserved_allowed {
+            }
+            if id.starts_with(RESERVED_NAMESPACE) && !reserved_allowed {
                 problems.push(Problem::ReservedNamespace { id: id.clone() });
             }
             if plugin.versions.is_empty() {
@@ -402,6 +403,57 @@ mod tests {
                 .iter()
                 .any(|p| matches!(p, Problem::NotHttps { .. }))
         );
+    }
+
+    /// Two rules, two findings. A reserved id that is *also* malformed used
+    /// to report only the malformation — the namespace rule sat behind an
+    /// `else` and never ran, which quietly made "every problem is reported"
+    /// untrue for the one input where both matter.
+    #[test]
+    fn a_malformed_id_in_the_reserved_namespace_reports_both_problems() {
+        let json = plugin("dev.simix.AUDIO", &version("1.0.0"));
+        let problems = index(&json).check();
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::NotReverseDomain { .. }))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::ReservedNamespace { .. }))
+        );
+        assert_eq!(problems.len(), 2, "got {problems:#?}");
+    }
+
+    #[test]
+    fn a_plugin_with_no_versions_is_refused() {
+        let json = plugin("org.example.thing", "");
+        assert!(matches!(
+            index(&json).check().as_slice(),
+            [Problem::NoVersions { .. }]
+        ));
+    }
+
+    #[test]
+    fn only_the_module_url_being_http_is_reported() {
+        let version_json = format!(
+            r#"{{"version":"1.0.0","min_api":1,"license":"MIT",
+                 "module":{{"url":"http://example.org/w","sha256":"{}","bytes":1}},
+                 "manifest":{{"url":"https://example.org/t","sha256":"{}","bytes":2}}}}"#,
+            "a".repeat(64),
+            "b".repeat(64)
+        );
+        let json = plugin("org.example.thing", &version_json);
+        let problems = index(&json).check();
+        assert_eq!(problems.len(), 1, "got {problems:#?}");
+        assert!(matches!(
+            problems.as_slice(),
+            [Problem::NotHttps {
+                artifact: "module",
+                ..
+            }]
+        ));
     }
 
     /// Every problem is reported, not just the first — a contributor

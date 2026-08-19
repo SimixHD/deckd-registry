@@ -52,6 +52,30 @@ pub enum Fault {
         /// The size in bytes the fetched bytes actually are.
         actual: u64,
     },
+    /// The manifest's bytes matched their checksum but could not be parsed
+    /// as `plugin.toml`.
+    ManifestUnreadable {
+        /// The plugin the manifest belongs to.
+        id: String,
+        /// The version the manifest belongs to.
+        version: String,
+        /// Why the manifest could not be read.
+        why: String,
+    },
+    /// The manifest disagrees with the index entry on a field the two are
+    /// supposed to share.
+    ManifestDisagrees {
+        /// The plugin the manifest belongs to.
+        id: String,
+        /// The version the manifest belongs to.
+        version: String,
+        /// Which field disagreed.
+        field: &'static str,
+        /// What the index entry says.
+        index: String,
+        /// What the manifest says.
+        manifest: String,
+    },
 }
 
 impl fmt::Display for Fault {
@@ -92,8 +116,39 @@ impl fmt::Display for Fault {
                     "{id} {version}: the {artifact} is {actual} bytes, the entry says {stated}"
                 )
             }
+            Self::ManifestUnreadable { id, version, why } => {
+                write!(f, "{id} {version}: the manifest could not be read: {why}")
+            }
+            Self::ManifestDisagrees {
+                id,
+                version,
+                field,
+                index,
+                manifest,
+            } => write!(
+                f,
+                "{id} {version}: the index says {field} is {index}, the manifest says {manifest}"
+            ),
         }
     }
+}
+
+/// Just enough of `plugin.toml` to hold it against the index entry.
+///
+/// Deliberately not `deck_core::Manifest`: that type lives in the private
+/// repository and cannot be depended on from here. What is compared is
+/// exactly the three things the index carries itself — everything else in a
+/// manifest is the client's business, and the client parses it in full
+/// before it installs anything.
+#[derive(serde::Deserialize)]
+struct ManifestExcerpt {
+    /// The plugin id, as the manifest names it.
+    id: String,
+    /// The version, as the manifest names it.
+    version: String,
+    /// The capabilities the manifest declares.
+    #[serde(default)]
+    capabilities: deck_index::Capabilities,
 }
 
 /// Fetch every artifact this index names and hold it against its entry.
@@ -117,7 +172,8 @@ pub fn check_artifacts(index: &Index, net: &dyn Fetcher) -> Vec<Fault> {
                 };
 
                 let actual = format!("{:x}", Sha256::digest(&bytes));
-                if actual != artifact.sha256 {
+                let actual_matches_entry = actual == artifact.sha256;
+                if !actual_matches_entry {
                     faults.push(Fault::ChecksumMismatch {
                         id: plugin.id.clone(),
                         version: version.version.clone(),
@@ -134,6 +190,45 @@ pub fn check_artifacts(index: &Index, net: &dyn Fetcher) -> Vec<Fault> {
                         stated: artifact.bytes,
                         actual: bytes.len() as u64,
                     });
+                }
+
+                if what == "manifest" && actual_matches_entry {
+                    match toml::from_str::<ManifestExcerpt>(&String::from_utf8_lossy(&bytes)) {
+                        Err(err) => faults.push(Fault::ManifestUnreadable {
+                            id: plugin.id.clone(),
+                            version: version.version.clone(),
+                            why: err.to_string(),
+                        }),
+                        Ok(manifest) => {
+                            if manifest.id != plugin.id {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "id",
+                                    index: plugin.id.clone(),
+                                    manifest: manifest.id.clone(),
+                                });
+                            }
+                            if manifest.version != version.version {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "version",
+                                    index: version.version.clone(),
+                                    manifest: manifest.version.clone(),
+                                });
+                            }
+                            if manifest.capabilities != version.capabilities {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "capabilities",
+                                    index: format!("{:?}", version.capabilities),
+                                    manifest: format!("{:?}", manifest.capabilities),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -177,6 +272,11 @@ mod tests {
         }
     }
 
+    /// A manifest that agrees with the fixture `index_for` builds — used
+    /// wherever a test's point is the *module*, not the manifest, so the
+    /// manifest check has nothing to say and stays out of the way.
+    const OK_MANIFEST: &str = "id = \"org.example.thing\"\nversion = \"1.0.0\"\n";
+
     fn index_for(module_sha: &str, bytes: u64) -> Index {
         Index::from_json(&format!(
             r#"{{"schema":2,"updated":"2026-08-19","plugins":[{{
@@ -184,9 +284,10 @@ mod tests {
               "homepage":"https://example.org","versions":[{{
                 "version":"1.0.0","min_api":1,"license":"MIT",
                 "module":{{"url":"https://example.org/w","sha256":"{module_sha}","bytes":{bytes}}},
-                "manifest":{{"url":"https://example.org/t","sha256":"{}","bytes":4}}
+                "manifest":{{"url":"https://example.org/t","sha256":"{}","bytes":{}}}
               }}]}}]}}"#,
-            sha256_hex(b"toml")
+            sha256_hex(OK_MANIFEST.as_bytes()),
+            OK_MANIFEST.len()
         ))
         .expect("the fixture parses")
     }
@@ -201,14 +302,14 @@ mod tests {
         let index = index_for(&sha256_hex(b"wasm"), 4);
         let net = Canned::default()
             .with("https://example.org/w", b"wasm")
-            .with("https://example.org/t", b"toml");
+            .with("https://example.org/t", OK_MANIFEST.as_bytes());
         assert!(check_artifacts(&index, &net).is_empty());
     }
 
     #[test]
     fn a_url_that_answers_with_nothing_is_reported() {
         let index = index_for(&sha256_hex(b"wasm"), 4);
-        let net = Canned::default().with("https://example.org/t", b"toml");
+        let net = Canned::default().with("https://example.org/t", OK_MANIFEST.as_bytes());
         assert!(matches!(
             check_artifacts(&index, &net).as_slice(),
             [Fault::Unreachable {
@@ -224,7 +325,7 @@ mod tests {
         let index = index_for(&sha256_hex(b"wasm"), 4);
         let net = Canned::default()
             .with("https://example.org/w", b"something else entirely")
-            .with("https://example.org/t", b"toml");
+            .with("https://example.org/t", OK_MANIFEST.as_bytes());
         assert!(
             check_artifacts(&index, &net)
                 .iter()
@@ -239,7 +340,7 @@ mod tests {
         let index = index_for(&sha256_hex(b"wasm"), 999);
         let net = Canned::default()
             .with("https://example.org/w", b"wasm")
-            .with("https://example.org/t", b"toml");
+            .with("https://example.org/t", OK_MANIFEST.as_bytes());
         assert!(matches!(
             check_artifacts(&index, &net).as_slice(),
             [Fault::WrongSize {
@@ -268,11 +369,127 @@ mod tests {
         let oversized = vec![0u8; (super::MAX_ARTIFACT_BYTES + 1) as usize];
         let net = Canned::default()
             .with("https://example.org/w", &oversized)
-            .with("https://example.org/t", b"toml");
+            .with("https://example.org/t", OK_MANIFEST.as_bytes());
         assert!(matches!(
             check_artifacts(&index, &net).as_slice(),
             [Fault::Unreachable { artifact: "module", why, .. }]
                 if why.contains(&(super::MAX_ARTIFACT_BYTES + 1).to_string())
         ));
+    }
+
+    fn index_with_manifest(caps: &str) -> Index {
+        Index::from_json(&format!(
+            r#"{{"schema":2,"updated":"2026-08-19","plugins":[{{
+              "id":"org.example.thing","name":"N","description":"d","author":"a",
+              "homepage":"https://example.org","versions":[{{
+                "version":"1.0.0","min_api":1,"license":"MIT",
+                "capabilities":{caps},
+                "module":{{"url":"https://example.org/w","sha256":"{}","bytes":4}},
+                "manifest":{{"url":"https://example.org/t","sha256":"{}","bytes":{}}}
+              }}]}}]}}"#,
+            sha256_hex(b"wasm"),
+            sha256_hex(MANIFEST.as_bytes()),
+            MANIFEST.len()
+        ))
+        .expect("the fixture parses")
+    }
+
+    const MANIFEST: &str = r#"id = "org.example.thing"
+name = "Thing"
+version = "1.0.0"
+api = 1
+
+[capabilities]
+process = ["wpctl"]
+timer = true
+"#;
+
+    fn net_with_manifest() -> Canned {
+        Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", MANIFEST.as_bytes())
+    }
+
+    #[test]
+    fn a_manifest_that_agrees_with_its_entry_reports_nothing() {
+        let index = index_with_manifest(r#"{"process":["wpctl"],"timer":true}"#);
+        assert!(check_artifacts(&index, &net_with_manifest()).is_empty());
+    }
+
+    /// The whole point of checking twice. An entry that advertises fewer
+    /// permissions than the module actually declares would show the user
+    /// one thing and let the daemon enforce another.
+    #[test]
+    fn an_entry_that_understates_the_permissions_is_reported() {
+        let index = index_with_manifest(r#"{"process":["wpctl"]}"#);
+        assert!(
+            check_artifacts(&index, &net_with_manifest())
+                .iter()
+                .any(|fault| matches!(
+                    fault,
+                    Fault::ManifestDisagrees {
+                        field: "capabilities",
+                        ..
+                    }
+                ))
+        );
+    }
+
+    #[test]
+    fn an_entry_that_overstates_the_permissions_is_reported_too() {
+        let index = index_with_manifest(r#"{"process":["wpctl","rm"],"timer":true}"#);
+        assert!(
+            check_artifacts(&index, &net_with_manifest())
+                .iter()
+                .any(|fault| matches!(
+                    fault,
+                    Fault::ManifestDisagrees {
+                        field: "capabilities",
+                        ..
+                    }
+                ))
+        );
+    }
+
+    #[test]
+    fn a_manifest_naming_a_different_id_is_reported() {
+        let index = index_with_manifest(r#"{"process":["wpctl"],"timer":true}"#);
+        let other = MANIFEST.replace("org.example.thing", "org.example.other");
+        let net = Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", other.as_bytes());
+        // The checksum no longer matches either — both faults are real and
+        // both are reported.
+        assert!(
+            check_artifacts(&index, &net)
+                .iter()
+                .any(|fault| matches!(fault, Fault::ChecksumMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn a_manifest_that_is_not_toml_at_all_is_reported() {
+        let broken = "this is not toml {{{";
+        let index = Index::from_json(&format!(
+            r#"{{"schema":2,"updated":"2026-08-19","plugins":[{{
+              "id":"org.example.thing","name":"N","description":"d","author":"a",
+              "homepage":"https://example.org","versions":[{{
+                "version":"1.0.0","min_api":1,"license":"MIT",
+                "module":{{"url":"https://example.org/w","sha256":"{}","bytes":4}},
+                "manifest":{{"url":"https://example.org/t","sha256":"{}","bytes":{}}}
+              }}]}}]}}"#,
+            sha256_hex(b"wasm"),
+            sha256_hex(broken.as_bytes()),
+            broken.len()
+        ))
+        .unwrap();
+        let net = Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", broken.as_bytes());
+        assert!(
+            check_artifacts(&index, &net)
+                .iter()
+                .any(|fault| matches!(fault, Fault::ManifestUnreadable { .. }))
+        );
     }
 }

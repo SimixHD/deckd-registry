@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 deck-index = { path = "../deck-index" }
+serde                = { workspace = true }
 serde_json.workspace = true
 sha2.workspace       = true
+toml                 = { workspace = true }
 ureq.workspace       = true

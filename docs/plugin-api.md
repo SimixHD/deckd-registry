@@ -398,8 +398,9 @@ after 5 s.
 **`list-options` has no caller in the daemon today.** It's in the ABI
 anyway, because exports can't be retrofitted in a backward-compatible way:
 once the marketplace is live, extending the guest side after the fact would
-break every plugin already published. The Property Inspector from
-sub-project 3 will call it. `audio` already answers it.
+break every plugin already published. The Property Inspector — the settings
+interface for a key, still to be built in the main deckd project — will call
+it. `audio` already answers it.
 
 ---
 
@@ -451,11 +452,11 @@ a `.po` file's `msgid` in English.
 | Field | Rule |
 |---|---|
 | `id` | Reverse domain name from `a-z`, `0-9`, `.`, `-`, `_`, with no leading dot. **Allowlist, not a blocklist**: the id becomes the directory name, and `PathBuf::join` with an absolute path *replaces* the root instead of appending to it — an unchecked id like `/home/user/.config/systemd/user` would move the one folder a plugin without a capability may write to, to an arbitrary place on disk. Rejected rather than sanitized |
-| `api` | Higher than the supported version → the manifest is rejected, by name |
+| `api` | Compared for **equality** with the supported version — any other number, above it or below it, and the manifest is rejected by name. Why equality and not "at most" is under "`api` stays 1" below |
 | `actions` | At least one; ids must be unique |
 | `fs_read` | Absolute paths only, and none of them containing `..` |
 | `http` | A hostname, optionally with `:port`. Without a port, 443 applies; with one, exactly that port. **ASCII-only:** an internationalized name has to be written as punycode (section 9) |
-| `actions[].icon` | **Optional**, `#[serde(default)]` — a manifest without this field keeps loading unchanged, `Manifest::api` stays `1`. When set: a `deck_core::IconRef` identifier, always a library reference (`"lib:<set>/<name>"`), never a path — a path would need a second resolution root (the plugin directory) that doesn't exist here. Meant to appear on a key that doesn't choose an identifier of its own; how and where this gets resolved and drawn hasn't been built yet (the icon library, sub-project 3). The grammar and the three forms an identifier can take are documented in the daemon's profile format reference, under "Identifier instead of path" |
+| `actions[].icon` | **Optional**, `#[serde(default)]` — a manifest without this field keeps loading unchanged, `Manifest::api` stays `1`. When set: a `deck_core::IconRef` identifier, always a library reference (`"lib:<set>/<name>"`), never a path — a path would need a second resolution root (the plugin directory) that doesn't exist here. Meant to appear on a key that doesn't choose an identifier of its own; how and where this gets resolved and drawn hasn't been built yet — the icon library it names is still to come in the main deckd project. The grammar and the three forms an identifier can take are documented in the daemon's profile format reference, under "Identifier instead of path" |
 
 Field types: `text`, `num`, `bool`, `select`, `multi`, `group`, `keys`,
 `json`. `options` takes either a fixed list or the name of a dynamic source
@@ -546,9 +547,9 @@ A profile points at all of this with three fields on a key:
 
 `settings` is free-form JSON and gets passed through unchanged — the schema
 only knows about the plugin. A manifest that names an unknown capability,
-carries an unknown field, or points at too high an `api` is **reported by
-name and reason** at startup and skipped, not swallowed — the same rule a
-malformed profile already follows.
+carries an unknown field, or names an `api` other than the supported one is
+**reported by name and reason** at startup and skipped, not swallowed — the
+same rule a malformed profile already follows.
 
 ---
 
@@ -584,8 +585,7 @@ to register beneath the declared name could walk right into.
 
 ## 7. Limits
 
-The numbers from §7 of the design spec, matching what the code actually
-enforces:
+The numbers the daemon's code actually enforces:
 
 | What | Value | Why |
 |---|---|---|
@@ -666,8 +666,7 @@ reports the state before and after. Two properties worth knowing:
   verdict arrives seconds later, through `deckctl plugins`.
 
 For `Broken` it isn't needed: a plugin whose file gets fixed comes back on
-its own (§11 of the design spec) — the thread reads and hashes it every
-5 s.
+its own — the thread reads and hashes it every 5 s.
 
 ---
 
@@ -695,8 +694,8 @@ ABI needs to know it.
   on after the 2-s deadline while its `run-process` is still running, the
   child does not end along with the daemon. That would be covered by
   `KillMode=control-group` in the systemd unit — **which does not exist
-  yet**, it's coming in sub-project 6. This is described here, not
-  guaranteed.
+  yet**; packaging deckd as a service is still to come in the main deckd
+  project. This is described here, not guaranteed.
 - **Hostnames in the manifest have to be punycode.** `url` punycodes while
   parsing; a Unicode host would never match. So it's rejected as
   `ManifestError::BadHttpHost` already at load time, rather than failing
@@ -709,8 +708,10 @@ ABI needs to know it.
   loaded.
 - **A newly installed plugin is only noticed after a restart.** The host
   reads the user directory **once, at build time**; there is no runtime
-  rescan. Until the marketplace exists (sub-project 5), there's also no way
-  to install anything at runtime in the first place — that will need one.
+  rescan. The marketplace this document ships with exists now, but no
+  released deckd installs from it yet, so there is still no way to install
+  anything while the daemon runs — the day there is, it will need that
+  rescan.
 - **No quota on the data directory.** `write-file` is limited to 4 MiB per
   call, but a plugin can repeat the call as often as it likes and fill up
   the disk that way. The limits in section 7 cover memory and compute time

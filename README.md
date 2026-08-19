@@ -64,7 +64,7 @@ newest version first:
 | `categories` | plugin | Sorting only: `audio`, `system`, `media`, `smarthome`, `development`, `other` |
 | `i18n` | plugin | Keyed by the **English source sentence**, the same way `plugin.toml` and `po/de.po` are |
 | `version` | version | Semantic versioning |
-| `min_api` | **version** | It changes between versions — that is exactly why it lives here and not on the plugin |
+| `min_api` | **version** | It changes between versions — that is exactly why it lives here and not on the plugin. It is the `api` from that version's own `plugin.toml` under the index's name, and CI compares the two |
 | `license` | **version** | SPDX identifier; a licence change is a version event |
 | `capabilities` | **version** | Same reasoning, and comparing two versions' capabilities is the basis of the update rule |
 | `module`, `manifest` | version | Each an URL, `sha256` and `bytes` — two files, no archive |

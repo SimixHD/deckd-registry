@@ -36,14 +36,16 @@ Checked from `index.json` alone, before anything is fetched:
 |---|---|
 | The schema number is one this tool understands | `index says schema {found}, this tool speaks 2` |
 | No plugin `id` is listed twice | `{id}: listed twice` |
-| `id` is a reverse domain | `{id}: an id is a reverse domain of a domain you own, such as org.example.thing` |
+| `id` is a reverse domain: at least three parts separated by dots, none empty | `{id}: an id needs at least three parts separated by dots, none of them empty — the domain you own, reversed, then a name for the plugin, such as org.example.thing` |
+| `id` holds only `a-z`, `0-9`, `-` and `_` between its dots | `{id}: an id holds only a-z, 0-9, - and _ between its dots; 'T' is none of those` |
 | `id` does not start with the reserved namespace | `{id}: dev.simix.* is reserved for the registry's own plugins` |
 | The plugin has at least one version | `{id}: no versions listed` |
 | `homepage` is `https://` | `{id}: the homepage url is not https` |
 | `version` is a semantic version | `{id} {version}: not a semantic version` |
 | No `version` is listed twice for one plugin | `{id} {version}: listed twice` |
 | Versions are sorted newest first | `{id}: {earlier} is listed above {later}; versions go newest first` |
-| Each `sha256` is 64 lowercase hex characters | `{id} {version}: the module sha256 is not 64 hex characters` (or `manifest`) |
+| Each `sha256` is 64 hex characters | `{id} {version}: the module sha256 is not 64 hex characters` (or `manifest`) |
+| Each `sha256` is lowercase, the way `sha256sum` prints it | `{id} {version}: the module sha256 has uppercase letters; write it the way sha256sum prints it, in lowercase` (or `manifest`) |
 | Each artifact `url` is `https://` | `{id} {version}: the module url is not https` (or `manifest`) |
 
 Checked by fetching the two files each version names — this is the part that
@@ -57,6 +59,7 @@ touches the network:
 | `plugin.toml` parses at all | `{id} {version}: the manifest could not be read: {why}` |
 | `id` in `plugin.toml` matches the index entry | `{id} {version}: the index says id is {index}, the manifest says {manifest}` |
 | `version` in `plugin.toml` matches the index entry | `{id} {version}: the index says version is {index}, the manifest says {manifest}` |
+| `api` in `plugin.toml` matches the entry's `min_api` — the same number under two names | `{id} {version}: the index says min_api is {index}, the manifest says {manifest}` |
 | Each of the five `capabilities` fields (`process`, `http`, `http_private`, `fs_read`, `timer`) in `plugin.toml` matches the index entry | `{id} {version}: the index says capabilities.{field} is {index}, the manifest says {manifest}` |
 
 A capability mismatch names the one field that disagrees, not the whole
@@ -85,6 +88,15 @@ access will be rejected.*
 request from a fork is checked without `--allow-reserved`, so nobody outside
 this repository can claim it.
 
+The characters are exactly the ones a `plugin.toml` id may hold — `a-z`,
+`0-9`, `-` and `_`, with dots between the parts, the rule in
+[`docs/plugin-api.md`](docs/plugin-api.md#5-the-manifest). The registry adds
+one thing on top of it: at least three parts, none of them empty. The daemon
+would happily load a plugin called `audio`, because there the id is only a
+directory name on one machine; here it is the key the whole marketplace is
+indexed by, and the first person to ask for a word like that would be taking
+it from everybody else.
+
 ## Versions
 
 Newest first, semantic, no duplicate `version` string for the same plugin. A
@@ -110,7 +122,8 @@ decided from `index.json` alone, and — only if that comes back clean — a
 fetch of every `module` and `manifest` URL in the file, to confirm each one
 is reachable, hashes to its stated `sha256`, is the stated number of bytes,
 and that the `plugin.toml` behind it agrees with the index entry on `id`,
-`version`, and every `capabilities` field. A clean run prints one line naming
+`version`, `min_api` and every `capabilities` field. A clean run prints one
+line naming
 how many plugins the index holds — today, with no plugins listed yet, that
 line reads:
 

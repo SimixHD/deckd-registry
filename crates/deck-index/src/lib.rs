@@ -2,7 +2,8 @@
 //!
 //! This crate is deliberately small and deliberately shared. The CI of the
 //! registry uses it to decide whether a pull request may land; the deckd
-//! client uses the very same code to decide what it is willing to install.
+//! client will use the very same code to decide what it is willing to
+//! install.
 //! Two implementations would eventually disagree, and the day they did, the
 //! registry would be advertising something no client could use.
 //!

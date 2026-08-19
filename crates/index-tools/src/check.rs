@@ -165,8 +165,15 @@ mod tests {
     }
 
     impl Fetcher for Canned {
-        fn fetch(&self, url: &str, _max: u64) -> Result<Vec<u8>, String> {
-            self.0.get(url).cloned().ok_or_else(|| "404".to_owned())
+        fn fetch(&self, url: &str, max: u64) -> Result<Vec<u8>, String> {
+            let body = self.0.get(url).cloned().ok_or_else(|| "404".to_owned())?;
+            if body.len() as u64 > max {
+                return Err(format!(
+                    "body is {} bytes, over the {max} byte limit",
+                    body.len()
+                ));
+            }
+            Ok(body)
         }
     }
 
@@ -248,5 +255,24 @@ mod tests {
         let index =
             Index::from_json(r#"{"schema":2,"updated":"2026-08-19","plugins":[]}"#).unwrap();
         assert!(check_artifacts(&index, &Canned::default()).is_empty());
+    }
+
+    /// `MAX_ARTIFACT_BYTES` is a safeguard against a mistyped URL, not a
+    /// number that only ever gets read by a human. `Canned` enforces it the
+    /// same way the real `Http` fetcher's `ureq` limit reader does, so this
+    /// is the one test in the crate that proves the cap actually bites
+    /// rather than being silently truncated or ignored.
+    #[test]
+    fn a_body_over_the_limit_is_reported_unreachable_and_names_the_size() {
+        let index = index_for(&sha256_hex(b"wasm"), 4);
+        let oversized = vec![0u8; (super::MAX_ARTIFACT_BYTES + 1) as usize];
+        let net = Canned::default()
+            .with("https://example.org/w", &oversized)
+            .with("https://example.org/t", b"toml");
+        assert!(matches!(
+            check_artifacts(&index, &net).as_slice(),
+            [Fault::Unreachable { artifact: "module", why, .. }]
+                if why.contains(&(super::MAX_ARTIFACT_BYTES + 1).to_string())
+        ));
     }
 }

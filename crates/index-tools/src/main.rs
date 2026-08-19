@@ -2,6 +2,7 @@
 
 mod check;
 mod fetch;
+mod render;
 
 use std::process::ExitCode;
 
@@ -25,19 +26,31 @@ enum Command<'a> {
         /// Whether `deck_index::RESERVED_NAMESPACE` may be claimed.
         allow_reserved: bool,
     },
+    /// Build the static site for the index at `path`.
+    Render {
+        /// The index file to read.
+        path: &'a str,
+    },
     /// The arguments do not describe a known command.
     Usage,
 }
 
 /// Decide what was asked for.
 ///
-/// Any `--`-prefixed argument other than [`ALLOW_RESERVED`] falls back to
-/// [`Command::Usage`] rather than being silently ignored. Today that is the
-/// only flag there is, so a typo would happen to fail safe — but a later
-/// workflow turns `--allow-reserved` on only for changes that can have come
-/// from this repository's own owner, and a misspelling there deserves a
-/// visible usage error, not a run that quietly landed on the strict
-/// default for reasons nobody can read back from the output.
+/// Flag legality is decided per command rather than once for all of them:
+/// `check` accepts `--allow-reserved` and nothing else, and any other flag —
+/// including a typo of that one — falls back to [`Command::Usage`] rather
+/// than being silently ignored. A later workflow turns `--allow-reserved` on
+/// only for changes that can have come from this repository's own owner, and
+/// a misspelling there deserves a visible usage error, not a run that
+/// quietly landed on the strict default for reasons nobody can read back
+/// from the output.
+///
+/// `render` takes no flags at all. It permits the reserved namespace
+/// unconditionally — it renders this repository's own index, not somebody
+/// else's pull request — so `--allow-reserved` on `render` could only
+/// mislead, and rejecting it outright is safer than a global flag table that
+/// would otherwise swallow it unused.
 fn parse_args(args: &[String]) -> Command<'_> {
     let flags: Vec<&str> = args
         .iter()
@@ -50,15 +63,17 @@ fn parse_args(args: &[String]) -> Command<'_> {
         .filter(|a| !a.starts_with("--"))
         .collect();
 
-    if flags.iter().any(|flag| *flag != ALLOW_RESERVED) {
-        return Command::Usage;
-    }
-
     match plain.as_slice() {
-        ["check", path] => Command::Check {
-            path,
-            allow_reserved: flags.contains(&ALLOW_RESERVED),
-        },
+        ["check", path] => {
+            if flags.iter().any(|flag| *flag != ALLOW_RESERVED) {
+                return Command::Usage;
+            }
+            Command::Check {
+                path,
+                allow_reserved: flags.contains(&ALLOW_RESERVED),
+            }
+        }
+        ["render", path] if flags.is_empty() => Command::Render { path },
         _ => Command::Usage,
     }
 }
@@ -70,8 +85,10 @@ fn main() -> ExitCode {
             path,
             allow_reserved,
         } => run_check(path, allow_reserved),
+        Command::Render { path } => run_render(path),
         Command::Usage => {
             eprintln!("usage: index-tools check <index.json> [--allow-reserved]");
+            eprintln!("       index-tools render <index.json>");
             ExitCode::FAILURE
         }
     }
@@ -133,6 +150,60 @@ fn run_check(path: &str, reserved_allowed: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Write the site into `_site/`, beside a copy of the index itself — the
+/// page footer links to it, and a marketplace whose data is one click from
+/// its presentation is easier to trust than one where it is not.
+fn run_render(path: &str) -> ExitCode {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("{path}: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let index = match Index::from_json(&text) {
+        Ok(index) => index,
+        Err(err) => {
+            eprintln!("{path}: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // The offline rules, before a single byte is written. `render` builds
+    // file names out of plugin ids, and it is this call that has already
+    // refused an id that could name a file somewhere else. No network here:
+    // whether a download URL answers is not this command's business, and
+    // publishing must not wait on it.
+    let problems = index.check_allowing_reserved();
+    if !problems.is_empty() {
+        for problem in &problems {
+            eprintln!("{problem}");
+        }
+        return ExitCode::FAILURE;
+    }
+
+    let out = std::path::Path::new("_site");
+    if let Err(err) = std::fs::create_dir_all(out) {
+        eprintln!("_site: {err}");
+        return ExitCode::FAILURE;
+    }
+    for (name, html) in crate::render::render(&index) {
+        if let Err(err) = std::fs::write(out.join(&name), html) {
+            eprintln!("{name}: {err}");
+            return ExitCode::FAILURE;
+        }
+    }
+    for (from, to) in [("site/style.css", "style.css"), (path, "index.json")] {
+        if let Err(err) = std::fs::copy(from, out.join(to)) {
+            eprintln!("{from}: {err}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    println!("_site: {} plugins rendered", index.plugins.len());
+    ExitCode::SUCCESS
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Command, parse_args};
@@ -184,5 +255,27 @@ mod tests {
     #[test]
     fn no_arguments_at_all_falls_back_to_usage() {
         assert_eq!(parse_args(&args(&[])), Command::Usage);
+    }
+
+    #[test]
+    fn a_well_formed_render_is_recognised() {
+        assert_eq!(
+            parse_args(&args(&["render", "index.json"])),
+            Command::Render { path: "index.json" }
+        );
+    }
+
+    /// `render` takes no flags: it always permits the reserved namespace,
+    /// since it renders this repository's own index and never a stranger's
+    /// pull request, so `--allow-reserved` here could only mislead about
+    /// what the command does. Without this arm the flag would be collected
+    /// and then silently unused — the same failure mode Task 6's review
+    /// raised for an unrecognised flag, one level up.
+    #[test]
+    fn render_does_not_accept_the_allow_reserved_flag() {
+        assert_eq!(
+            parse_args(&args(&["render", "index.json", "--allow-reserved"])),
+            Command::Usage
+        );
     }
 }

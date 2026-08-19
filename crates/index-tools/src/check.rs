@@ -69,7 +69,10 @@ pub enum Fault {
         id: String,
         /// The version the manifest belongs to.
         version: String,
-        /// Which field disagreed.
+        /// Which field disagreed — `"id"`, `"version"`, or one of the five
+        /// `"capabilities.*"` sub-fields, so a capability mismatch names
+        /// the one permission that differs rather than dumping the whole
+        /// struct on both sides.
         field: &'static str,
         /// What the index entry says.
         index: String,
@@ -218,13 +221,51 @@ pub fn check_artifacts(index: &Index, net: &dyn Fetcher) -> Vec<Fault> {
                                     manifest: manifest.version.clone(),
                                 });
                             }
-                            if manifest.capabilities != version.capabilities {
+                            if manifest.capabilities.process != version.capabilities.process {
                                 faults.push(Fault::ManifestDisagrees {
                                     id: plugin.id.clone(),
                                     version: version.version.clone(),
-                                    field: "capabilities",
-                                    index: format!("{:?}", version.capabilities),
-                                    manifest: format!("{:?}", manifest.capabilities),
+                                    field: "capabilities.process",
+                                    index: format!("{:?}", version.capabilities.process),
+                                    manifest: format!("{:?}", manifest.capabilities.process),
+                                });
+                            }
+                            if manifest.capabilities.http != version.capabilities.http {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "capabilities.http",
+                                    index: format!("{:?}", version.capabilities.http),
+                                    manifest: format!("{:?}", manifest.capabilities.http),
+                                });
+                            }
+                            if manifest.capabilities.http_private
+                                != version.capabilities.http_private
+                            {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "capabilities.http_private",
+                                    index: format!("{:?}", version.capabilities.http_private),
+                                    manifest: format!("{:?}", manifest.capabilities.http_private),
+                                });
+                            }
+                            if manifest.capabilities.fs_read != version.capabilities.fs_read {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "capabilities.fs_read",
+                                    index: format!("{:?}", version.capabilities.fs_read),
+                                    manifest: format!("{:?}", manifest.capabilities.fs_read),
+                                });
+                            }
+                            if manifest.capabilities.timer != version.capabilities.timer {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "capabilities.timer",
+                                    index: format!("{:?}", version.capabilities.timer),
+                                    manifest: format!("{:?}", manifest.capabilities.timer),
                                 });
                             }
                         }
@@ -418,7 +459,8 @@ timer = true
 
     /// The whole point of checking twice. An entry that advertises fewer
     /// permissions than the module actually declares would show the user
-    /// one thing and let the daemon enforce another.
+    /// one thing and let the daemon enforce another. Here the entry omits
+    /// `timer`, so `timer` is exactly the field that must be named.
     #[test]
     fn an_entry_that_understates_the_permissions_is_reported() {
         let index = index_with_manifest(r#"{"process":["wpctl"]}"#);
@@ -428,13 +470,16 @@ timer = true
                 .any(|fault| matches!(
                     fault,
                     Fault::ManifestDisagrees {
-                        field: "capabilities",
+                        field: "capabilities.timer",
                         ..
                     }
                 ))
         );
     }
 
+    /// The entry claims an extra `process` entry (`"rm"`) the manifest
+    /// never declared, so `process` is exactly the field that must be
+    /// named.
     #[test]
     fn an_entry_that_overstates_the_permissions_is_reported_too() {
         let index = index_with_manifest(r#"{"process":["wpctl","rm"],"timer":true}"#);
@@ -444,11 +489,79 @@ timer = true
                 .any(|fault| matches!(
                     fault,
                     Fault::ManifestDisagrees {
-                        field: "capabilities",
+                        field: "capabilities.process",
                         ..
                     }
                 ))
         );
+    }
+
+    /// Pins all five `Capabilities` sub-fields as independently detected:
+    /// each entry differs from `net_with_manifest`'s manifest
+    /// (`process=["wpctl"], timer=true`, all else default) in exactly one
+    /// field, and the fault names that one field, not the whole struct.
+    #[test]
+    fn each_capability_sub_field_disagreeing_alone_is_named() {
+        let cases: [(&str, &str); 5] = [
+            (
+                r#"{"process":["other"],"timer":true}"#,
+                "capabilities.process",
+            ),
+            (
+                r#"{"process":["wpctl"],"timer":true,"http":["example.com"]}"#,
+                "capabilities.http",
+            ),
+            (
+                r#"{"process":["wpctl"],"timer":true,"http_private":true}"#,
+                "capabilities.http_private",
+            ),
+            (
+                r#"{"process":["wpctl"],"timer":true,"fs_read":["/etc"]}"#,
+                "capabilities.fs_read",
+            ),
+            (
+                r#"{"process":["wpctl"],"timer":false}"#,
+                "capabilities.timer",
+            ),
+        ];
+        for (caps, expected_field) in cases {
+            let index = index_with_manifest(caps);
+            let faults = check_artifacts(&index, &net_with_manifest());
+            assert!(
+                faults
+                    .iter()
+                    .any(|fault| matches!(fault, Fault::ManifestDisagrees { field, .. } if *field == expected_field)),
+                "expected a fault naming {expected_field:?} for capabilities {caps}, got {faults:?}"
+            );
+        }
+    }
+
+    /// Two fields disagreeing at once must produce two faults, not one —
+    /// the same "every problem is reported" rule the `id`/`version` checks
+    /// already follow.
+    #[test]
+    fn two_capability_fields_disagreeing_produces_two_faults() {
+        let index = index_with_manifest(r#"{"process":["other"],"timer":false}"#);
+        let faults = check_artifacts(&index, &net_with_manifest());
+        let disagreements: Vec<&Fault> = faults
+            .iter()
+            .filter(|fault| matches!(fault, Fault::ManifestDisagrees { .. }))
+            .collect();
+        assert_eq!(disagreements.len(), 2, "faults were: {faults:?}");
+        assert!(disagreements.iter().any(|fault| matches!(
+            fault,
+            Fault::ManifestDisagrees {
+                field: "capabilities.process",
+                ..
+            }
+        )));
+        assert!(disagreements.iter().any(|fault| matches!(
+            fault,
+            Fault::ManifestDisagrees {
+                field: "capabilities.timer",
+                ..
+            }
+        )));
     }
 
     #[test]

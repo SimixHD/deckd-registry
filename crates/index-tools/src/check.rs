@@ -69,10 +69,11 @@ pub enum Fault {
         id: String,
         /// The version the manifest belongs to.
         version: String,
-        /// Which field disagreed — `"id"`, `"version"`, or one of the five
-        /// `"capabilities.*"` sub-fields, so a capability mismatch names
-        /// the one permission that differs rather than dumping the whole
-        /// struct on both sides.
+        /// Which field disagreed — `"id"`, `"version"`, `"min_api"`, or one
+        /// of the five `"capabilities.*"` sub-fields, so a capability
+        /// mismatch names the one permission that differs rather than
+        /// dumping the whole struct on both sides. `"min_api"` is the
+        /// index's name for it; the manifest calls the same number `api`.
         field: &'static str,
         /// What the index entry says.
         index: String,
@@ -140,8 +141,8 @@ impl fmt::Display for Fault {
 ///
 /// Deliberately not `deck_core::Manifest`: that type lives in the private
 /// repository and cannot be depended on from here. What is compared is
-/// exactly the three things the index carries itself — everything else in a
-/// manifest is the client's business, and the client parses it in full
+/// exactly the four things the index carries itself — everything else in a
+/// manifest is the client's business, and the client will parse it in full
 /// before it installs anything.
 #[derive(serde::Deserialize)]
 struct ManifestExcerpt {
@@ -149,6 +150,12 @@ struct ManifestExcerpt {
     id: String,
     /// The version, as the manifest names it.
     version: String,
+    /// The manifest API this module was built against — what the index
+    /// calls `min_api`. Not `#[serde(default)]`: the daemon's own manifest
+    /// type requires the field, so a manifest without it is one no client
+    /// can load, and the honest report for that is "the manifest could not
+    /// be read" rather than a silent 0 compared against the entry.
+    api: u32,
     /// The capabilities the manifest declares.
     #[serde(default)]
     capabilities: deck_index::Capabilities,
@@ -219,6 +226,24 @@ pub fn check_artifacts(index: &Index, net: &dyn Fetcher) -> Vec<Fault> {
                                     field: "version",
                                     index: version.version.clone(),
                                     manifest: manifest.version.clone(),
+                                });
+                            }
+                            // The field `pick` decides on, and the only
+                            // reason the index carries a list of versions
+                            // at all. An entry claiming `min_api: 1` for a
+                            // module built against API 2 is offered to
+                            // every API-1 client, downloaded by all of
+                            // them, and then refused by their own daemon —
+                            // a fault that costs a download to discover
+                            // and looks like a broken client rather than a
+                            // wrong entry.
+                            if manifest.api != version.min_api {
+                                faults.push(Fault::ManifestDisagrees {
+                                    id: plugin.id.clone(),
+                                    version: version.version.clone(),
+                                    field: "min_api",
+                                    index: version.min_api.to_string(),
+                                    manifest: manifest.api.to_string(),
                                 });
                             }
                             if manifest.capabilities.process != version.capabilities.process {
@@ -316,7 +341,7 @@ mod tests {
     /// A manifest that agrees with the fixture `index_for` builds — used
     /// wherever a test's point is the *module*, not the manifest, so the
     /// manifest check has nothing to say and stays out of the way.
-    const OK_MANIFEST: &str = "id = \"org.example.thing\"\nversion = \"1.0.0\"\n";
+    const OK_MANIFEST: &str = "id = \"org.example.thing\"\nversion = \"1.0.0\"\napi = 1\n";
 
     fn index_for(module_sha: &str, bytes: u64) -> Index {
         Index::from_json(&format!(
@@ -418,7 +443,12 @@ mod tests {
         ));
     }
 
-    fn index_with_manifest(caps: &str) -> Index {
+    /// An index whose manifest entry describes `manifest` exactly: the
+    /// `sha256` and the `bytes` are computed from that very text, so the
+    /// fetched bytes match their entry and the field-by-field comparison —
+    /// which runs only on bytes that already matched — is the only thing
+    /// left that can report anything.
+    fn index_with_manifest_text(caps: &str, manifest: &str) -> Index {
         Index::from_json(&format!(
             r#"{{"schema":2,"updated":"2026-08-19","plugins":[{{
               "id":"org.example.thing","name":"N","description":"d","author":"a",
@@ -429,10 +459,14 @@ mod tests {
                 "manifest":{{"url":"https://example.org/t","sha256":"{}","bytes":{}}}
               }}]}}]}}"#,
             sha256_hex(b"wasm"),
-            sha256_hex(MANIFEST.as_bytes()),
-            MANIFEST.len()
+            sha256_hex(manifest.as_bytes()),
+            manifest.len()
         ))
         .expect("the fixture parses")
+    }
+
+    fn index_with_manifest(caps: &str) -> Index {
+        index_with_manifest_text(caps, MANIFEST)
     }
 
     const MANIFEST: &str = r#"id = "org.example.thing"
@@ -445,6 +479,11 @@ process = ["wpctl"]
 timer = true
 "#;
 
+    /// The capabilities `MANIFEST` declares, spelled the way an index entry
+    /// spells them — so a test whose point is some *other* field has
+    /// nothing to say about capabilities.
+    const OK_CAPS: &str = r#"{"process":["wpctl"],"timer":true}"#;
+
     fn net_with_manifest() -> Canned {
         Canned::default()
             .with("https://example.org/w", b"wasm")
@@ -453,7 +492,7 @@ timer = true
 
     #[test]
     fn a_manifest_that_agrees_with_its_entry_reports_nothing() {
-        let index = index_with_manifest(r#"{"process":["wpctl"],"timer":true}"#);
+        let index = index_with_manifest(OK_CAPS);
         assert!(check_artifacts(&index, &net_with_manifest()).is_empty());
     }
 
@@ -564,19 +603,113 @@ timer = true
         )));
     }
 
+    /// The bytes hash to their entry, so the `id` comparison is the only
+    /// rule left that can speak — and it must, or an entry could point at
+    /// a module belonging to an entirely different plugin.
     #[test]
     fn a_manifest_naming_a_different_id_is_reported() {
-        let index = index_with_manifest(r#"{"process":["wpctl"],"timer":true}"#);
+        let other = MANIFEST.replace("org.example.thing", "org.example.other");
+        let index = index_with_manifest_text(OK_CAPS, &other);
+        let net = Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", other.as_bytes());
+        let faults = check_artifacts(&index, &net);
+        assert!(
+            matches!(
+                faults.as_slice(),
+                [Fault::ManifestDisagrees { field: "id", index, manifest, .. }]
+                    if index == "org.example.thing" && manifest == "org.example.other"
+            ),
+            "got {faults:?}"
+        );
+    }
+
+    /// The same for `version`: an entry that says 1.0.0 while the manifest
+    /// behind it says 2.0.0 publishes a release under the wrong number, and
+    /// no checksum notices — both files are exactly what the entry names.
+    #[test]
+    fn a_manifest_naming_a_different_version_is_reported() {
+        let other = MANIFEST.replace("1.0.0", "2.0.0");
+        let index = index_with_manifest_text(OK_CAPS, &other);
+        let net = Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", other.as_bytes());
+        let faults = check_artifacts(&index, &net);
+        assert!(
+            matches!(
+                faults.as_slice(),
+                [Fault::ManifestDisagrees { field: "version", index, manifest, .. }]
+                    if index == "1.0.0" && manifest == "2.0.0"
+            ),
+            "got {faults:?}"
+        );
+    }
+
+    /// The index calls it `min_api`, the manifest calls it `api`, and they
+    /// are the same number. An entry understating it is the one mismatch
+    /// nothing downstream can recover from: every client whose API level
+    /// reaches the entry's claim is offered the version, downloads both
+    /// files, and is then refused by its own daemon.
+    #[test]
+    fn a_manifest_built_against_another_api_than_the_entry_claims_is_reported() {
+        let other = MANIFEST.replace("api = 1", "api = 2");
+        let index = index_with_manifest_text(OK_CAPS, &other);
+        let net = Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", other.as_bytes());
+        let faults = check_artifacts(&index, &net);
+        assert!(
+            matches!(
+                faults.as_slice(),
+                [Fault::ManifestDisagrees { field: "min_api", index, manifest, .. }]
+                    if index == "1" && manifest == "2"
+            ),
+            "got {faults:?}"
+        );
+    }
+
+    /// A manifest without `api` at all is not a manifest with `api = 0`:
+    /// the daemon's own type requires the field, so the honest answer is
+    /// that the file cannot be read, not a comparison against a number
+    /// nobody wrote.
+    #[test]
+    fn a_manifest_with_no_api_field_is_reported_as_unreadable() {
+        let other = MANIFEST.replace("api = 1\n", "");
+        let index = index_with_manifest_text(OK_CAPS, &other);
+        let net = Canned::default()
+            .with("https://example.org/w", b"wasm")
+            .with("https://example.org/t", other.as_bytes());
+        assert!(
+            check_artifacts(&index, &net)
+                .iter()
+                .any(|fault| matches!(fault, Fault::ManifestUnreadable { .. }))
+        );
+    }
+
+    /// The comparison runs only on bytes that already matched their
+    /// checksum, and this pins that order: a manifest that hashes to
+    /// something else is reported for *that* and nothing more. Reporting a
+    /// field disagreement as well would name a file the entry does not
+    /// actually point at, and send a contributor to fix the wrong one of
+    /// the two.
+    #[test]
+    fn a_manifest_that_fails_its_checksum_is_not_also_compared_field_by_field() {
+        let index = index_with_manifest(OK_CAPS);
         let other = MANIFEST.replace("org.example.thing", "org.example.other");
         let net = Canned::default()
             .with("https://example.org/w", b"wasm")
             .with("https://example.org/t", other.as_bytes());
-        // The checksum no longer matches either — both faults are real and
-        // both are reported.
+        let faults = check_artifacts(&index, &net);
         assert!(
-            check_artifacts(&index, &net)
+            faults
                 .iter()
                 .any(|fault| matches!(fault, Fault::ChecksumMismatch { .. }))
+        );
+        assert!(
+            !faults
+                .iter()
+                .any(|fault| matches!(fault, Fault::ManifestDisagrees { .. })),
+            "got {faults:?}"
         );
     }
 

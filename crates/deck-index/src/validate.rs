@@ -28,10 +28,23 @@ pub enum Problem {
         /// The plugin ID that is duplicated.
         id: String,
     },
-    /// A plugin ID is not a reverse domain.
+    /// A plugin ID is not shaped like a reverse domain: fewer than three
+    /// dot-separated parts, or one of them empty.
     NotReverseDomain {
         /// The plugin ID that is not a reverse domain.
         id: String,
+    },
+    /// A plugin ID holds a character an id may not hold.
+    ///
+    /// Separate from [`Problem::NotReverseDomain`] rather than folded into
+    /// it: an id can be perfectly shaped and still carry a capital letter,
+    /// and a contributor told only "an id is a reverse domain" would read
+    /// that as a description of the id they already wrote.
+    BadIdCharacter {
+        /// The plugin ID holding the character.
+        id: String,
+        /// The first character that is not allowed.
+        character: char,
     },
     /// A plugin ID uses the reserved namespace.
     ReservedNamespace {
@@ -84,6 +97,20 @@ pub enum Problem {
         /// The artifact type ("module" or "manifest").
         artifact: &'static str,
     },
+    /// A checksum is 64 hex characters, but some of them are uppercase.
+    ///
+    /// Its own variant, because "not 64 hex characters" is exactly what an
+    /// uppercase checksum *is not* — a contributor holding a correct digest
+    /// typed in capitals would count the characters, find 64 of them, and
+    /// have nowhere to go.
+    UppercaseChecksum {
+        /// The plugin ID with the uppercase checksum.
+        id: String,
+        /// The version with the uppercase checksum.
+        version: String,
+        /// The artifact type ("module" or "manifest").
+        artifact: &'static str,
+    },
     /// A URL is not HTTPS.
     NotHttps {
         /// The plugin ID with the non-HTTPS URL.
@@ -104,7 +131,14 @@ impl fmt::Display for Problem {
             Self::DuplicateId { id } => write!(f, "{id}: listed twice"),
             Self::NotReverseDomain { id } => write!(
                 f,
-                "{id}: an id is a reverse domain of a domain you own, such as org.example.thing"
+                "{id}: an id needs at least three parts separated by dots, none of them empty \
+                 — the domain you own, reversed, then a name for the plugin, such as \
+                 org.example.thing"
+            ),
+            Self::BadIdCharacter { id, character } => write!(
+                f,
+                "{id}: an id holds only a-z, 0-9, - and _ between its dots; {character:?} is \
+                 none of those"
             ),
             Self::ReservedNamespace { id } => write!(
                 f,
@@ -126,6 +160,15 @@ impl fmt::Display for Problem {
                 f,
                 "{id} {version}: the {artifact} sha256 is not 64 hex characters"
             ),
+            Self::UppercaseChecksum {
+                id,
+                version,
+                artifact,
+            } => write!(
+                f,
+                "{id} {version}: the {artifact} sha256 has uppercase letters; write it the way \
+                 sha256sum prints it, in lowercase"
+            ),
             Self::NotHttps {
                 id,
                 version,
@@ -135,22 +178,41 @@ impl fmt::Display for Problem {
     }
 }
 
-fn looks_like_a_reverse_domain(id: &str) -> bool {
-    let parts: Vec<&str> = id.split('.').collect();
-    parts.len() >= 3
-        && parts.iter().all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        })
+/// The first character of `id` that an id may not hold, if there is one.
+///
+/// The same allowlist the daemon applies to a manifest id — `a-z`, `0-9`,
+/// `.`, `-`, `_` — and deliberately not a narrower one. The registry may ask
+/// for *more* than the daemon does about an id's shape, since an id here has
+/// to be unique across everything anybody publishes; it must not reject
+/// characters the daemon accepts and `docs/plugin-api.md` publishes as
+/// legal, or a plugin that installs by hand could never be listed.
+///
+/// An allowlist rather than a list of forbidden characters, for the reason
+/// the daemon gives too: the id becomes a directory name there and a file
+/// name here, and a rule that enumerates what may appear cannot be walked
+/// past by an encoding nobody thought of.
+fn forbidden_character(id: &str) -> Option<char> {
+    id.chars()
+        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_')))
 }
 
-fn is_sha256(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+/// Whether `id` is shaped like a reverse domain with a plugin name on the
+/// end: at least three parts, none of them empty.
+///
+/// This part is the registry's own rule and is stricter than the daemon's,
+/// which accepts any non-empty name that does not start with a dot. Two
+/// reasons: an id here is the marketplace's unique key, so it has to be a
+/// domain somebody owns plus a name below it rather than a word like
+/// `audio` that the first person to ask for it would take from everyone
+/// else — and no empty part means no `..` and no leading dot, which is what
+/// makes the id safe as the file name `render` builds out of it.
+fn has_reverse_domain_shape(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('.').collect();
+    parts.len() >= 3 && parts.iter().all(|part| !part.is_empty())
+}
+
+fn is_sixty_four_hex(text: &str) -> bool {
+    text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 impl Index {
@@ -180,8 +242,19 @@ impl Index {
             if !seen_ids.insert(id.clone()) {
                 problems.push(Problem::DuplicateId { id: id.clone() });
             }
-            if !looks_like_a_reverse_domain(&id) {
+            // Two rules and two findings, the same way the reserved
+            // namespace does not hide behind the shape rule: an id can be
+            // shaped right and spelled wrong, or the reverse, and a
+            // contributor fixing one should not then be sent back for the
+            // other.
+            if !has_reverse_domain_shape(&id) {
                 problems.push(Problem::NotReverseDomain { id: id.clone() });
+            }
+            if let Some(character) = forbidden_character(&id) {
+                problems.push(Problem::BadIdCharacter {
+                    id: id.clone(),
+                    character,
+                });
             }
             if id.starts_with(RESERVED_NAMESPACE) && !reserved_allowed {
                 problems.push(Problem::ReservedNamespace { id: id.clone() });
@@ -229,8 +302,18 @@ impl Index {
                 for (artifact, what) in
                     [(&version.module, "module"), (&version.manifest, "manifest")]
                 {
-                    if !is_sha256(&artifact.sha256) {
+                    // One message per checksum, and the more specific one
+                    // wins: a digest that is 64 hex characters but shouted
+                    // gets told so, rather than being told it is not 64 hex
+                    // characters when it plainly is.
+                    if !is_sixty_four_hex(&artifact.sha256) {
                         problems.push(Problem::BadChecksum {
+                            id: id.clone(),
+                            version: number.clone(),
+                            artifact: what,
+                        });
+                    } else if artifact.sha256.chars().any(|c| c.is_ascii_uppercase()) {
+                        problems.push(Problem::UppercaseChecksum {
                             id: id.clone(),
                             version: number.clone(),
                             artifact: what,
@@ -370,9 +453,38 @@ mod tests {
         ));
     }
 
-    /// The reserved namespace. `check` refuses it for everyone; the
-    /// workflow in Task 8 is what lets the registry's own pull requests
-    /// through.
+    /// An underscore is legal in a manifest id — the daemon accepts it and
+    /// `docs/plugin-api.md` says so — so it has to be legal here too. A
+    /// registry that refused it would make a plugin that installs by hand
+    /// impossible to publish, for no reason anybody could name.
+    #[test]
+    fn an_id_with_an_underscore_is_accepted() {
+        let json = plugin("org.example.my_thing", &version("1.0.0"));
+        let problems = index(&json).check();
+        assert!(problems.is_empty(), "got {problems:#?}");
+    }
+
+    /// The message has to name what is actually wrong. A capital letter is
+    /// the one an author hits by hand, and being told "an id is a reverse
+    /// domain" describes the id they already wrote.
+    #[test]
+    fn an_id_with_a_capital_letter_names_the_character() {
+        let json = plugin("org.example.Thing", &version("1.0.0"));
+        assert!(matches!(
+            index(&json).check().as_slice(),
+            [Problem::BadIdCharacter { character: 'T', .. }]
+        ));
+        assert!(
+            index(&json).check()[0].to_string().contains("'T'"),
+            "the message names the character: {}",
+            index(&json).check()[0]
+        );
+    }
+
+    /// The reserved namespace. `check` refuses it for everyone;
+    /// `check_allowing_reserved` is what lets the registry's own pull
+    /// requests through, and the validate workflow calls it only for a
+    /// change that can have come from this repository's own owner.
     #[test]
     fn the_reserved_namespace_is_refused_by_default() {
         let json = plugin("dev.simix.audio", &version("1.0.0"));
@@ -403,6 +515,33 @@ mod tests {
                 .check()
                 .iter()
                 .all(|p| matches!(p, Problem::BadChecksum { .. }))
+        );
+    }
+
+    /// The other half of the checksum rule, and the half nothing pinned:
+    /// `sha256sum` prints lowercase, so an uppercase digest is somebody's
+    /// retyping — and it must be reported as *that*, not as "not 64 hex
+    /// characters", which is untrue of the 64 hex characters in front of
+    /// them.
+    #[test]
+    fn a_checksum_in_uppercase_is_refused_and_the_message_says_why() {
+        let json = plugin("org.example.thing", &version("1.0.0"))
+            .replace(&"a".repeat(64), &"A".repeat(64));
+        let problems = index(&json).check();
+        assert!(
+            matches!(
+                problems.as_slice(),
+                [Problem::UppercaseChecksum {
+                    artifact: "module",
+                    ..
+                }]
+            ),
+            "got {problems:#?}"
+        );
+        assert!(
+            problems[0].to_string().contains("uppercase"),
+            "the message names the violation: {}",
+            problems[0]
         );
     }
 
@@ -462,7 +601,7 @@ mod tests {
         assert!(
             problems
                 .iter()
-                .any(|p| matches!(p, Problem::NotReverseDomain { .. }))
+                .any(|p| matches!(p, Problem::BadIdCharacter { character: 'A', .. }))
         );
         assert!(
             problems

@@ -1,0 +1,17 @@
+[package]
+name                   = "index-tools"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+publish                = false
+description            = "Checks the registry index and renders its pages."
+
+[lints]
+workspace = true
+
+[dependencies]
+deck-index = { path = "../deck-index" }
+serde_json.workspace = true
+sha2.workspace       = true
+ureq.workspace       = true

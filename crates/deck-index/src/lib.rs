@@ -12,5 +12,7 @@
 
 mod index;
 mod pick;
+mod validate;
 
 pub use index::{Artifact, Capabilities, Index, Plugin, SCHEMA, Version, Yanked};
+pub use validate::{Problem, RESERVED_NAMESPACE};

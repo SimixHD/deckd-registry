@@ -466,4 +466,37 @@ mod tests {
         );
         assert_eq!(index(&json).check().len(), 2);
     }
+
+    /// A whole index that breaks five rules at once, kept as a file rather
+    /// than as a string in a test: this is the shape a contributor's first
+    /// attempt actually has, and it is what proves the tool reports all of
+    /// it in one go instead of sending them round five times.
+    #[test]
+    fn the_broken_fixture_reports_every_rule_it_breaks() {
+        let index = Index::from_json(include_str!("../tests/fixtures/broken.json"))
+            .expect("it is malformed, not unparseable");
+        let problems = index.check();
+
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::NotReverseDomain { .. }))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::VersionsOutOfOrder { .. }))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::BadChecksum { .. }))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, Problem::NotHttps { .. }))
+        );
+        assert!(problems.len() >= 5, "got {problems:#?}");
+    }
 }

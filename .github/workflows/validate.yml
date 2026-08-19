@@ -1,0 +1,41 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain comes from rust-toolchain.toml, which is a directory
+      # override: pinning a version here would be ignored anyway, and a
+      # reader would be left believing the wrong thing.
+      - run: rustup show
+
+      - name: Formatting and lints
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # The index itself. Offline rules first, then every URL it names —
+      # this is the step that fetches, and the only one that needs the
+      # network.
+      # `--allow-reserved` only where the change can have come from the
+      # owner: a push to main, or a pull request whose branch lives in this
+      # repository. A fork's pull request runs without it, so a stranger
+      # cannot claim dev.simix.* by opening one.
+      - name: The index
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] \
+            || [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            cargo run -p index-tools -- check index.json --allow-reserved
+          else
+            cargo run -p index-tools -- check index.json
+          fi

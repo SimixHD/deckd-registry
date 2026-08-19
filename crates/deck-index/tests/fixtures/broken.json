@@ -1,0 +1,19 @@
+{
+  "schema": 2,
+  "updated": "2026-08-19",
+  "plugins": [{
+    "id": "audio",
+    "name": "Broken on purpose",
+    "description": "Every rule this fixture breaks has a test naming it.",
+    "author": "nobody",
+    "homepage": "https://example.org",
+    "versions": [
+      { "version": "1.0.0", "min_api": 1, "license": "MIT",
+        "module":   { "url": "http://example.org/w", "sha256": "nope", "bytes": 1 },
+        "manifest": { "url": "https://example.org/t", "sha256": "bb", "bytes": 2 } },
+      { "version": "2.0.0", "min_api": 1, "license": "MIT",
+        "module":   { "url": "https://example.org/w", "sha256": "aa", "bytes": 1 },
+        "manifest": { "url": "https://example.org/t", "sha256": "bb", "bytes": 2 } }
+    ]
+  }]
+}
